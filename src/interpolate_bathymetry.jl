@@ -3,7 +3,7 @@ using PyCall
 using FFTW
 using FastSphericalHarmonics
 
-@pyimport skimage.measure as skimagemeasure
+
 
 function interpolate_bathymetry_from_file(filename, passes, degree, latitude)
 
@@ -102,40 +102,40 @@ function bathymetry_from_etopo1(Nφ, Nλ, spher_harm_coeff, filter)
     return etopo1_final
 end
 
-function remove_connected_regions(bathymetry, skimagemeasure)
-
+function remove_connected_regions(bathymetry)
+    # @pyimport skimage.measure as skimagemeasure
     batneg = deepcopy(bathymetry)
 
-    
-    batneg[ batneg .> 0 ] .= 0
-    batneg[ batneg .< 0 ] .= 1
+
+    batneg[batneg.>0] .= 0
+    batneg[batneg.<0] .= 1
 
     labels = skimagemeasure.label(batneg)
 
     total_elements = zeros(maximum(labels))
 
     for i in 1:length(total_elements)
-        total_elements[i] = sum(labels[ labels .== i ])
+        total_elements[i] = sum(labels[labels.==i])
     end
 
-    ocean_idx      = findfirst(x -> x == maximum(x), total_elements)
+    ocean_idx = findfirst(x -> x == maximum(x), total_elements)
     second_maximum = maximum(filter((x) -> x != total_elements[ocean_idx], total_elements))
 
     bering_sea_idx = findfirst(x -> x == second_maximum, total_elements)
-    
+
     labels = Float64.(labels)
-    labels[ labels .== 0 ] .= NaN
+    labels[labels.==0] .= NaN
 
     for i in 1:length(total_elements)
         if (i != ocean_idx) && (i != bering_sea_idx)
-            labels[ labels .== i ] .= NaN
+            labels[labels.==i] .= NaN
         end
     end
 
     bathymetry .+= labels
-    bathymetry[ bathymetry .> -5 ] .= -10
-    bathymetry[ isnan.(bathymetry) ] .= ABOVE_SEA_LEVEL
-    
+    bathymetry[bathymetry.>-5] .= -10
+    bathymetry[isnan.(bathymetry)] .= ABOVE_SEA_LEVEL
+
     return bathymetry
 end
 

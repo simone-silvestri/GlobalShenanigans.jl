@@ -1,5 +1,7 @@
+__precompile__()
 module GlobalShenanigans
 
+using PyCall
 using Reexport
 @reexport using Oceananigans
 using JLD2
@@ -20,5 +22,11 @@ include("utils.jl")
 include("interpolate_bathymetry.jl")
 include("interpolate_initial_condition.jl")
 # include("src/interpolate_fluxes.jl")
+
+const sckikitimage = PyNULL()
+
+function __init__()
+    copy!(sckikitimage, pyimport_conda("skimage.measure", "scikit-image"))
+end
 
 end # module
