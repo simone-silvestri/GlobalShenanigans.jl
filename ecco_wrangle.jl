@@ -1,6 +1,6 @@
 using NCDatasets
 
-month_int = 2
+month_int = 3
 year_int = 1
 fieldname = "SALT"
 local_directory = "/mnt/podaac_drive/Version4/Release4/interp_monthly/"
