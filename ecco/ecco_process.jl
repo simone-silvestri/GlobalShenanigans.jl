@@ -4,10 +4,11 @@ include("ecco_wrangle.jl")
 
 # File Format Stuff
 field, latitude, longitude, raditude = grab_ecco_field("THETA", 1, 1)
-ecco_size = size(averaged_fields[1])
-oceananigans_format = zeros((ecco_size[2], ecco_size[1], ecco_size[3], 12))
+ecco_size = size(field)
+# oceananigans_format = zeros((ecco_size[2], ecco_size[1], ecco_size[3], 12))
+oceananigans_format = zeros((ecco_size[1], ecco_size[2], ecco_size[3], 12))
 
-fname = "wrangle_ecco.h5"
+fname = "wrangle_ecco_2.h5"
 fid = h5open(fname, "w")
 create_group(fid, "fields")
 create_group(fid, "grid")
@@ -46,7 +47,9 @@ for fieldname in fieldnames
         end
 
         ecco_format = averaged_fields[1]
-        change_format!(view(oceananigans_format, :, :, :, month_integer), ecco_format)
+        # change_format!(view(oceananigans_format, :, :, :, month_integer), ecco_format)
+        view_oceananigans_format = view(oceananigans_format, :, :, :, month_integer)
+        view_oceananigans_format .= ecco_format
     end
 
     if fieldname == "THETA"
@@ -57,7 +60,3 @@ for fieldname in fieldnames
 end
 
 close(fid)
-
-##
-fname = "wrangle_ecco.h5"
-fid = h5open(fname, "r")

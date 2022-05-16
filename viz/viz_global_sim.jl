@@ -7,6 +7,8 @@ S = Strac
 λ = λc
 ϕ = φc
 
+oceananigans_grid = (λ = λc, ϕ = φc, z = z_faces)
+
 ##
 colorrangeS = round.(Ref(Int), quantile.(Ref((S[(!).(isnan.(S))])), (0.01, 0.98)))
 colorrangeT = round.(Ref(Int), quantile.(Ref((θ[(!).(isnan.(θ))])), (0.01, 0.98)))
