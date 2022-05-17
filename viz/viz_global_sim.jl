@@ -6,8 +6,8 @@ S = Strac
 
 λ = λc
 ϕ = φc
-
-oceananigans_grid = (λ = λc, ϕ = φc, z = z_faces)
+zC = Array(grid.zᵃᵃᶜ[1:end-4])
+oceananigans_grid = (λ=λc, ϕ=φc, z=zC)
 
 ##
 colorrangeS = round.(Ref(Int), quantile.(Ref((S[(!).(isnan.(S))])), (0.01, 0.98)))

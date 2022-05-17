@@ -36,6 +36,8 @@ function comparison(grid1, solution1, grid2, solution2; quantiles=(0.01, 0.99), 
     ax1 = Axis(fig[2, 2])
     ax2 = Axis(fig[2, 3])
     ax3 = Axis(fig[3, 2:3])
+    ax4 = Axis(fig[2, 5])
+    ax5 = Axis(fig[3, 5])
 
     λ1, ϕ1, z1 = grid1
     λ2, ϕ2, z2 = grid2
@@ -52,8 +54,15 @@ function comparison(grid1, solution1, grid2, solution2; quantiles=(0.01, 0.99), 
     ϕ1_index = @lift(closest_index($ϕvalue, ϕ1))
     ϕ2_index = @lift(closest_index($ϕvalue, ϕ2))
 
+    ϕstring = @lift(string($ϕvalue))
+    λstring = @lift(string($λvalue))
+    ax0 = Label(fig[1, 1:6], text=@lift("Fields at Longitude=" * $λstring * " and Latitude=" * $ϕstring), textsize=40)
+
     field1 = @lift(solution1[$λ1_index, :, :])
     field2 = @lift(solution2[$λ2_index, :, :])
+
+    field1_profile = @lift(solution1[$λ1_index, $ϕ1_index, :])
+    field2_profile = @lift(solution2[$λ2_index, $ϕ2_index, :])
 
     surface_index = closest_index(0.0, z1) # 0 is assumed to be the surface
     surface_field = solution1[:, :, surface_index]
@@ -61,11 +70,14 @@ function comparison(grid1, solution1, grid2, solution2; quantiles=(0.01, 0.99), 
     colorrange = quantile.(Ref(filter(!isnan, solution1)), quantiles)
     surfacecolorrange = quantile.(Ref(filter(!isnan, surface_field)), quantiles)
 
-    hm = heatmap!(ax1, ϕ1, z1, field1, colorrange=colorrange, colormap=colormap)
-    heatmap!(ax2, ϕ2, z2, field2, colorrange=colorrange, colormap=colormap)
-    heatmap!(ax3, λ1, ϕ1, surface_field, colorrange=surfacecolorrange, colormap=colormap)
+    hm = heatmap!(ax1, ϕ1, z1, field1, colorrange=colorrange, colormap=colormap, nan_color=:black)
+    heatmap!(ax2, ϕ2, z2, field2, colorrange=colorrange, colormap=colormap, nan_color=:black)
+    heatmap!(ax3, λ1, ϕ1, surface_field, colorrange=surfacecolorrange, colormap=colormap, nan_color=:black)
     vl = vlines!(ax3, @lift(λ1[$λ1_index]), color=:orange, linewidth=3)
     hl = hlines!(ax3, @lift(ϕ1[$ϕ1_index]), color=:yellow, linewidth=3)
+
+    line1 = lines!(ax4, field1_profile, z1)
+    line2 = lines!(ax5, field2_profile, z2)
 
     Colorbar(fig[2, 4], hm, height=Relative(3 / 4), width=25, ticklabelsize=30,
         labelsize=30, ticksize=25, tickalign=1,)
@@ -89,6 +101,14 @@ function comparison(grid1, solution1, grid2, solution2; quantiles=(0.01, 0.99), 
     ax3.ylabelsize = 25
     ax3.xticks = ([-160, -120, -80, -40, 0, 40, 80, 120, 160], ["160W", "120W", "80W", "40W", "0", "40E", "80E", "120E", "160E"])
     ax3.yticks = ([-80, -60, -30, 0, 30, 60, 80], ["80S", "60S", "30S", "0", "30N", "60N", "80N"])
+
+    for ax in [ax4, ax5]
+        ax.limits = (colorrange..., p_extrema.z...)
+        ax.ylabel = "Depth [km]"
+        ax.xlabelsize = 25
+        ax.ylabelsize = 25
+        ax.yticks = ([0, -1000, -2000, -3000, -4000, -5000], ["0", "1", "2", "3", "4", "5"])
+    end
 
     return fig
 end
