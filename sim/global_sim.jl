@@ -1,35 +1,35 @@
-#import Pkg
-#Pkg.activate("/home/ssilvest/Oceananigans.jl/")
 using Statistics
 using JLD2
 using Printf
+using CUDA
 # using Plots
 using Oceananigans
 using Oceananigans.Units
-
 using Oceananigans.Fields: interpolate, Field
 using Oceananigans.Architectures: arch_array
 using Oceananigans.Coriolis: HydrostaticSphericalCoriolis
 using Oceananigans.BoundaryConditions
-using Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid, GridFittedBottom, solid_node, solid_interface
+using Oceananigans.ImmersedBoundaries: ImmersedBoundaryGrid, GridFittedBottom, inactive_node, peripheral_node
+# solid_node is inactive_node and peripheral_node is peripheral_node
 using Oceananigans.TurbulenceClosures: RiBasedVerticalDiffusivity
 using CUDA: @allowscalar, device!
 using Oceananigans.Operators
 using Oceananigans.Operators: Δzᵃᵃᶜ
 using Oceananigans: prognostic_fields
 using Oceananigans.Advection: EnergyConservingScheme, VelocityStencil, VorticityStencil
+using Oceananigans.TurbulenceClosures: FluxTapering
+using SeawaterPolynomials.TEOS10
+using Oceananigans.Advection: VelocityStencil
 
-device!(0)
+using Oceananigans.TurbulenceClosures.CATKEVerticalDiffusivities:
+    CATKEVerticalDiffusivity, MixingLength
 
-@inline function visualize(field, lev, dims) 
-    (dims == 1) && (idx = (lev, :, :))
-    (dims == 2) && (idx = (:, lev, :))
-    (dims == 3) && (idx = (:, :, lev))
-
-    r = deepcopy(Array(interior(field)))[idx...]
-    r[ r.==0 ] .= NaN
-    return r
-end
+global_filepath = "/storage1/uq-global/GlobalShenanigans.jl/"
+load_initial_condition = true
+# ic_filepath = "smooth_initial_condition.jl"
+ic_filepath = global_filepath * "longer_null_hypothesis_teos10.jld2" # without parameterizations etc.
+# qs_filepath = "long_null_hypothesis.jl"
+qs_filepath = global_filepath * "even_longer_null_hypothesis_teos10.jld2"
 
 #####
 ##### Grid
@@ -45,12 +45,13 @@ Nx = 360
 Ny = 150
 Nz = 48
 
-const Nyears  = 5
-const Nmonths = 12 
+const Nyears = 100.0
+
+const Nmonths = 12
 const thirty_days = 30days
 
-output_prefix = "near_global_lat_lon_$(Nx)_$(Ny)_$(Nz)_fine"
-pickup_file   = false 
+output_prefix = global_filepath * "near_global_lat_lon_$(Nx)_$(Ny)_$(Nz)_fine"
+pickup_file = false
 
 #####
 ##### Load forcing files and inital conditions from ECCO version 4
@@ -76,7 +77,7 @@ datadep"quarter_degree_near_global_lat_lon"
 datadep_path = @datadep_str "quarter_degree_near_global_lat_lon/z_faces-50-levels.jld2"
 =#
 
-bathymetry = jldopen("bathymetry-360x150-latitude-75.0.jld2")["bathymetry"]
+bathymetry = jldopen(global_filepath * "bathymetry-360x150-latitude-75.0.jld2")["bathymetry"]
 
 τˣ = zeros(Nx, Ny, Nmonths)
 τʸ = zeros(Nx, Ny, Nmonths)
@@ -84,30 +85,30 @@ T★ = zeros(Nx, Ny, Nmonths)
 S★ = zeros(Nx, Ny, Nmonths)
 
 # Files contain 1 year (1992) of 12 monthly averages
-τˣ = jldopen("boundary_conditions-1degree.jld2")["τˣ"] ./ reference_density
-τʸ = jldopen("boundary_conditions-1degree.jld2")["τˣ"] ./ reference_density
-T★ = jldopen("boundary_conditions-1degree.jld2")["Tˢ"] 
-S★ = jldopen("boundary_conditions-1degree.jld2")["Sˢ"] 
+τˣ = jldopen(global_filepath * "boundary_conditions-1degree.jld2")["τˣ"] ./ reference_density
+τʸ = jldopen(global_filepath * "boundary_conditions-1degree.jld2")["τˣ"] ./ reference_density
+T★ = jldopen(global_filepath * "boundary_conditions-1degree.jld2")["Tˢ"]
+S★ = jldopen(global_filepath * "boundary_conditions-1degree.jld2")["Sˢ"]
 
 # Remember the convention!! On the surface a negative flux increases a positive decreases
 bathymetry = arch_array(arch, bathymetry)
-τˣ = arch_array(arch, - τˣ)
-τʸ = arch_array(arch, - τʸ)
+τˣ = arch_array(arch, -τˣ)
+τʸ = arch_array(arch, -τʸ)
 
 target_sea_surface_temperature = T★ = arch_array(arch, T★)
-target_sea_surface_salinity    = S★ = arch_array(arch, S★)
+target_sea_surface_salinity = S★ = arch_array(arch, S★)
 
 # Stretched faces taken from ECCO Version 4 (50 levels in the vertical)
 z_faces = jldopen("zgrid.jld2")["z"][5:end-4]
 
 # A spherical domain
 @show underlying_grid = LatitudeLongitudeGrid(arch,
-                                              size = (Nx, Ny, Nz),
-                                              longitude = (-180, 180),
-                                              latitude = latitude,
-                                              halo = (4, 4, 4),
-                                              z = z_faces,
-                                              precompute_metrics = true)
+    size=(Nx, Ny, Nz),
+    longitude=(-180, 180),
+    latitude=latitude,
+    halo=(4, 4, 4),
+    z=z_faces,
+    precompute_metrics=true)
 
 grid = ImmersedBoundaryGrid(underlying_grid, GridFittedBottom(bathymetry))
 
@@ -115,31 +116,40 @@ grid = ImmersedBoundaryGrid(underlying_grid, GridFittedBottom(bathymetry))
 ##### Physics and model setup
 #####
 
-νh = 1e+1 * 1e5
-νz = 5e-3 * 1e2
-κh = 1e+1 * 1e5
-κz = 1e-4 * 1e2
+νh = 1e+1 * 1e0
+νz = 5e-3 * 1e0
+κh = 1e+1 * 1e0
+κz = 1e-4 * 1e0
+
+κ_skew = 1000.0 * 1e-3       # [m² s⁻¹] skew diffusivity
+κ_symmetric = 900.0 * 1e-3   # [m² s⁻¹] symmetric diffusivity
 
 using Oceananigans.Operators: Δx, Δy
 using Oceananigans.TurbulenceClosures
 
-@inline νhb(i, j, k, grid, lx, ly, lz) = (1 / (1 / Δx(i, j, k, grid, lx, ly, lz)^2 + 1 / Δy(i, j, k, grid, lx, ly, lz)^2 ))^2 / 5days
+@inline νhb(i, j, k, grid, lx, ly, lz) = (1 / (1 / Δx(i, j, k, grid, lx, ly, lz)^2 + 1 / Δy(i, j, k, grid, lx, ly, lz)^2))^2 / 5days
 
 horizontal_diffusivity = HorizontalScalarDiffusivity(ν=νh, κ=κh)
-vertical_diffusivity   = VerticalScalarDiffusivity(VerticallyImplicitTimeDiscretization(), ν=νz, κ=κz)
-convective_adjustment  = RiBasedVerticalDiffusivity(VerticallyImplicitTimeDiscretization(), κ₀ = 1.0)
-biharmonic_viscosity   = HorizontalScalarBiharmonicDiffusivity(ν=νhb, discrete_form=true)
-                                                    
+vertical_diffusivity = VerticalScalarDiffusivity(VerticallyImplicitTimeDiscretization(), ν=νz, κ=κz)
+convective_adjustment = RiBasedVerticalDiffusivity(VerticallyImplicitTimeDiscretization(), κ₀=1.0)
+biharmonic_viscosity = HorizontalScalarBiharmonicDiffusivity(ν=νhb, discrete_form=true)
+
+biharmonic_viscosity = HorizontalScalarBiharmonicDiffusivity(ν=νhb, discrete_form=true)
+
+gerdes_koberle_willebrand_tapering = FluxTapering(1e-2)
+gent_mcwilliams_diffusivity = IsopycnalSkewSymmetricDiffusivity(κ_skew=κ_skew,
+    κ_symmetric=κ_symmetric,
+    slope_limiter=gerdes_koberle_willebrand_tapering)
 #####
 ##### Boundary conditions / time-dependent fluxes 
 #####
 
-@inline current_time_index(time, tot_months)     = mod(unsafe_trunc(Int32, time / thirty_days), tot_months) + 1
-@inline next_time_index(time, tot_months)        = mod(unsafe_trunc(Int32, time / thirty_days) + 1, tot_months) + 1
+@inline current_time_index(time, tot_months) = mod(unsafe_trunc(Int32, time / thirty_days), tot_months) + 1
+@inline next_time_index(time, tot_months) = mod(unsafe_trunc(Int32, time / thirty_days) + 1, tot_months) + 1
 @inline cyclic_interpolate(u₁::Number, u₂, time) = u₁ + mod(time / thirty_days, 1) * (u₂ - u₁)
 
-Δz_top    = @allowscalar Δzᵃᵃᶜ(1, 1, grid.Nz, grid.grid)
-Δz_bottom = @allowscalar Δzᵃᵃᶜ(1, 1, 1, grid.grid)
+Δz_top = @allowscalar Δzᵃᵃᶜ(1, 1, grid.Nz, grid.underlying_grid)
+Δz_bottom = @allowscalar Δzᵃᵃᶜ(1, 1, 1, grid.underlying_grid)
 
 @inline function surface_wind_stress(i, j, grid, clock, fields, τ)
     time = clock.time
@@ -154,27 +164,27 @@ biharmonic_viscosity   = HorizontalScalarBiharmonicDiffusivity(ν=νhb, discrete
     return cyclic_interpolate(τ₁, τ₂, time)
 end
 
-u_wind_stress_bc = FluxBoundaryCondition(surface_wind_stress, discrete_form = true, parameters = τˣ)
-v_wind_stress_bc = FluxBoundaryCondition(surface_wind_stress, discrete_form = true, parameters = τʸ)
+u_wind_stress_bc = FluxBoundaryCondition(surface_wind_stress, discrete_form=true, parameters=τˣ)
+v_wind_stress_bc = FluxBoundaryCondition(surface_wind_stress, discrete_form=true, parameters=τʸ)
 
-@inline u_bottom_drag(i, j, grid, clock, fields, μ) = @inbounds - μ * fields.u[i, j, 1]
-@inline v_bottom_drag(i, j, grid, clock, fields, μ) = @inbounds - μ * fields.v[i, j, 1]
+@inline u_bottom_drag(i, j, grid, clock, fields, μ) = @inbounds -μ * fields.u[i, j, 1]
+@inline v_bottom_drag(i, j, grid, clock, fields, μ) = @inbounds -μ * fields.v[i, j, 1]
 
 # Linear bottom drag:
 μ = 0.001 # ms⁻¹
 
-@inline is_immersed_drag_u(i, j, k, grid) = Int(solid_interface(Face(), Center(), Center(), i, j, k-1, grid) & !solid_node(Face(), Center(), Center(), i, j, k, grid))
-@inline is_immersed_drag_v(i, j, k, grid) = Int(solid_interface(Center(), Face(), Center(), i, j, k-1, grid) & !solid_node(Center(), Face(), Center(), i, j, k, grid))                                
+@inline is_immersed_drag_u(i, j, k, grid) = Int(peripheral_node(Face(), Center(), Center(), i, j, k - 1, grid) & !inactive_node(Face(), Center(), Center(), i, j, k, grid))
+@inline is_immersed_drag_v(i, j, k, grid) = Int(peripheral_node(Center(), Face(), Center(), i, j, k - 1, grid) & !inactive_node(Center(), Face(), Center(), i, j, k, grid))
 
 # Keep a constant linear drag parameter independent on vertical level
-@inline u_immersed_bottom_drag(i, j, k, grid, clock, fields, μ) = @inbounds - μ * is_immersed_drag_u(i, j, k, grid) * fields.u[i, j, k] / Δzᵃᵃᶜ(i, j, k, grid)
-@inline v_immersed_bottom_drag(i, j, k, grid, clock, fields, μ) = @inbounds - μ * is_immersed_drag_v(i, j, k, grid) * fields.v[i, j, k] / Δzᵃᵃᶜ(i, j, k, grid)
+@inline u_immersed_bottom_drag(i, j, k, grid, clock, fields, μ) = @inbounds -μ * is_immersed_drag_u(i, j, k, grid) * fields.u[i, j, k] / Δzᵃᵃᶜ(i, j, k, grid)
+@inline v_immersed_bottom_drag(i, j, k, grid, clock, fields, μ) = @inbounds -μ * is_immersed_drag_v(i, j, k, grid) * fields.v[i, j, k] / Δzᵃᵃᶜ(i, j, k, grid)
 
-Fu = Forcing(u_immersed_bottom_drag, discrete_form = true, parameters = μ)
-Fv = Forcing(v_immersed_bottom_drag, discrete_form = true, parameters = μ)
+Fu = Forcing(u_immersed_bottom_drag, discrete_form=true, parameters=μ)
+Fv = Forcing(v_immersed_bottom_drag, discrete_form=true, parameters=μ)
 
-u_bottom_drag_bc = FluxBoundaryCondition(u_bottom_drag, discrete_form = true, parameters = μ)
-v_bottom_drag_bc = FluxBoundaryCondition(v_bottom_drag, discrete_form = true, parameters = μ)
+u_bottom_drag_bc = FluxBoundaryCondition(u_bottom_drag, discrete_form=true, parameters=μ)
+v_bottom_drag_bc = FluxBoundaryCondition(v_bottom_drag, discrete_form=true, parameters=μ)
 
 @inline function surface_temperature_relaxation(i, j, grid, clock, fields, p)
     time = clock.time
@@ -189,7 +199,7 @@ v_bottom_drag_bc = FluxBoundaryCondition(v_bottom_drag, discrete_form = true, pa
     end
 
     T★ = cyclic_interpolate(T★₁, T★₂, time)
-                                
+
     return p.λ * (T_surface - T★)
 end
 
@@ -206,38 +216,55 @@ end
     end
 
     S★ = cyclic_interpolate(S★₁, S★₂, time)
-                                
+
     return p.λ * (S_surface - S★)
 end
 
 T_surface_relaxation_bc = FluxBoundaryCondition(surface_temperature_relaxation,
-                                                discrete_form = true,
-                                                parameters = (λ = Δz_top/7days, T★ = target_sea_surface_temperature))
+    discrete_form=true,
+    parameters=(λ=Δz_top / 7days, T★=target_sea_surface_temperature))
 
 S_surface_relaxation_bc = FluxBoundaryCondition(surface_salinity_relaxation,
-                                                discrete_form = true,
-                                                parameters = (λ = Δz_top/7days, S★ = target_sea_surface_salinity))
+    discrete_form=true,
+    parameters=(λ=Δz_top / 7days, S★=target_sea_surface_salinity))
 
-u_bcs = FieldBoundaryConditions(top = u_wind_stress_bc, bottom = u_bottom_drag_bc)
-v_bcs = FieldBoundaryConditions(top = v_wind_stress_bc, bottom = v_bottom_drag_bc)
-T_bcs = FieldBoundaryConditions(top = T_surface_relaxation_bc)
-S_bcs = FieldBoundaryConditions(top = S_surface_relaxation_bc)
+u_bcs = FieldBoundaryConditions(top=u_wind_stress_bc, bottom=u_bottom_drag_bc)
+v_bcs = FieldBoundaryConditions(top=v_wind_stress_bc, bottom=v_bottom_drag_bc)
+T_bcs = FieldBoundaryConditions(top=T_surface_relaxation_bc)
+S_bcs = FieldBoundaryConditions(top=S_surface_relaxation_bc)
 
-free_surface = ImplicitFreeSurface(solver_method=:HeptadiagonalIterativeSolver, preconditioner_method = :SparseInverse,
-                                   preconditioner_settings = (ε = 0.01, nzrel = 10))
 
-buoyancy = SeawaterBuoyancy(equation_of_state=LinearEquationOfState())
+free_surface = ImplicitFreeSurface(solver_method=:HeptadiagonalIterativeSolver, preconditioner_method=:SparseInverse,
+    preconditioner_settings=(ε=0.01, nzrel=10))
+free_surface = ImplicitFreeSurface()
 
-model = HydrostaticFreeSurfaceModel(grid = grid,
-                                    free_surface = free_surface,
-				                    momentum_advection = VectorInvariant(),  
-                                    coriolis = HydrostaticSphericalCoriolis(scheme = EnergyConservingScheme()),
-                                    buoyancy = buoyancy,
-                                    tracers = (:T, :S),
-                                    closure = (horizontal_diffusivity, vertical_diffusivity, convective_adjustment, biharmonic_viscosity),
-                                    boundary_conditions = (u=u_bcs, v=v_bcs, T=T_bcs, S=S_bcs),
-                                    forcing = (u=Fu, v=Fv),
-                                    tracer_advection = WENO5(grid = underlying_grid))
+
+# free_surface = ImplicitFreeSurface(solver_method=:HeptadiagonalIterativeSolver)
+
+eos = TEOS10EquationOfState()
+# eos = LinearEquationOfState()
+buoyancy = SeawaterBuoyancy(equation_of_state=eos)
+
+# catke_mixing_length = MixingLength()
+catke = CATKEVerticalDiffusivity()
+
+# GM
+gerdes_koberle_willebrand_tapering = FluxTapering(1e-2)
+gent_mcwilliams_diffusivity = IsopycnalSkewSymmetricDiffusivity(κ_skew=κ_skew,
+    κ_symmetric=κ_symmetric,
+    slope_limiter=gerdes_koberle_willebrand_tapering)
+
+closures = (vertical_diffusivity, biharmonic_viscosity, convective_adjustment) # gent_mcwilliams_diffusivity) #  # (vertical_diffusivity, convective_adjustment, biharmonic_viscosity) # , catke) #, gent_mcwilliams_diffusivity) # (horizontal_diffusivity, vertical_diffusivity, convective_adjustment, biharmonic_viscosity, gent_mcwilliams_diffusivity)
+model = HydrostaticFreeSurfaceModel(grid=grid,
+    free_surface=free_surface,
+    momentum_advection=WENO5(vector_invariant=VelocityStencil()), # VectorInvariant(), #
+    coriolis=HydrostaticSphericalCoriolis(scheme=EnergyConservingScheme()),
+    buoyancy=buoyancy,
+    tracers=(:T, :S, :e),
+    closure=closures,
+    boundary_conditions=(u=u_bcs, v=v_bcs, T=T_bcs, S=S_bcs),
+    forcing=(u=Fu, v=Fv),
+    tracer_advection=WENO5(grid=underlying_grid))
 
 #####
 ##### Initial condition:
@@ -248,7 +275,7 @@ u, v, w = model.velocities
 T = model.tracers.T
 S = model.tracers.S
 
-file_init = jldopen("initial_conditions-1degree.jld2")
+file_init = jldopen(global_filepath * "initial_conditions-1degree.jld2")
 
 @info "Reading initial conditions"
 T_init = file_init["T"]
@@ -264,22 +291,33 @@ fill_halo_regions!(S)
 ##### Simulation setup
 #####
 
-Δt = 6minutes 
+Δt = 20minutes
 
-simulation = Simulation(model, Δt = Δt, stop_time = Nyears*years)
+simulation = Simulation(model, Δt=Δt, stop_time=Nyears * years)
 
 start_time = [time_ns()]
 
 function progress(sim)
     wall_time = (time_ns() - start_time[1]) * 1e-9
 
+    #=
     η = model.free_surface.η
     u = model.velocities.u
     @info @sprintf("Time: % 12s, iteration: %d, max(|η|): %.2e m, max(|u|): %.2e ms⁻¹, wall time: %s",
-                    prettytime(sim.model.clock.time),
-                    sim.model.clock.iteration,
-                    maximum(abs, η), maximum(abs, u),
-                    prettytime(wall_time))
+        prettytime(sim.model.clock.time),
+        sim.model.clock.iteration,
+        maximum(abs, η), maximum(abs, u),
+        prettytime(wall_time))
+
+        =#
+
+    u = model.velocities.u
+    v = model.velocities.v
+    @info @sprintf("Time: % 12s, iteration: %d, max(|v|): %.2e m, max(|u|): %.2e ms⁻¹, wall time: %s",
+        prettytime(sim.model.clock.time),
+        sim.model.clock.iteration,
+        maximum(abs, v), maximum(abs, u),
+        prettytime(wall_time))
 
     start_time[1] = time_ns()
 
@@ -289,7 +327,6 @@ end
 simulation.callbacks[:progress] = Callback(progress, IterationInterval(10))
 
 
-#=
 u, v, w = model.velocities
 T = model.tracers.T
 S = model.tracers.S
@@ -306,19 +343,19 @@ T2 = Field(T * T)
 
 outputs = (; u, v, T, S, η)
 average_outputs = (; u, v, T, S, η, u2, v2, T2, η2)
-
+#=
 simulation.output_writers[:surface_fields] = JLD2OutputWriter(model, (; u, v, T, S, η),
                                                               schedule = TimeInterval(save_interval),
                                                               prefix = output_prefix * "_surface",
                                                               indices = (:, :, grid.Nz), 
                                                               force = true)
-
+=#
 simulation.output_writers[:averages] = JLD2OutputWriter(model, average_outputs,
-                                                              schedule = AveragedTimeInterval(4*30days, window=4*30days),
-                                                              prefix = output_prefix * "_averages",
-                                                              force = true)
+                                                              schedule = AveragedTimeInterval(30days, window=30days, stride = 10),
+                                                              filename = output_prefix * "_averages",
+                                                              overwrite_existing = true)
 
-
+#=
 simulation.output_writers[:checkpointer] = Checkpointer(model,
                                                         schedule = TimeInterval(6*30days),
                                                         prefix = output_prefix * "_checkpoint",
@@ -327,14 +364,39 @@ simulation.output_writers[:checkpointer] = Checkpointer(model,
 # Let's goo!
 @info "Running with Δt = $(prettytime(simulation.Δt))"
 
-run!(simulation, pickup = pickup_file)
+if load_initial_condition
+    @info "load in initial condition from " * ic_filepath
+    jlfile = jldopen(ic_filepath)
+    interior(simulation.model.velocities.u) .= CuArray(jlfile["velocities"]["u"])
+    interior(simulation.model.velocities.v) .= CuArray(jlfile["velocities"]["v"])
+    interior(simulation.model.velocities.w) .= CuArray(jlfile["velocities"]["w"])
+    interior(simulation.model.tracers.T) .= CuArray(jlfile["tracers"]["T"])
+    interior(simulation.model.tracers.S) .= CuArray(jlfile["tracers"]["S"])
+    interior(simulation.model.free_surface.η) .= CuArray(jlfile["free_surface"]["eta"])
+    close(jlfile)
+end
+
+run!(simulation, pickup=pickup_file)
 
 @info """
 
     Simulation took $(prettytime(simulation.run_wall_time))
-    Background diffusivity: $background_diffusivity
     Free surface: $(typeof(model.free_surface).name.wrapper)
     Time step: $(prettytime(Δt))
 """
 
 
+
+rm(qs_filepath, force=true)
+jlfile = jldopen(qs_filepath, "a+")
+JLD2.Group(jlfile, "velocities")
+JLD2.Group(jlfile, "tracers")
+JLD2.Group(jlfile, "free_surface") # don't forget free surface
+
+jlfile["velocities"]["u"] = Array(interior(simulation.model.velocities.u))
+jlfile["velocities"]["v"] = Array(interior(simulation.model.velocities.v))
+jlfile["velocities"]["w"] = Array(interior(simulation.model.velocities.w))
+jlfile["tracers"]["T"] = Array(interior(simulation.model.tracers.T))
+jlfile["tracers"]["S"] = Array(interior(simulation.model.tracers.S))
+jlfile["free_surface"]["eta"] = Array(interior(simulation.model.free_surface.η))
+close(jlfile)

@@ -8,7 +8,7 @@ ecco_size = size(field)
 # oceananigans_format = zeros((ecco_size[2], ecco_size[1], ecco_size[3], 12))
 oceananigans_format = zeros((ecco_size[1], ecco_size[2], ecco_size[3], 12))
 
-fname = "wrangle_ecco_2.h5"
+fname = "wrangle_ecco_3.h5"
 fid = h5open(fname, "w")
 create_group(fid, "fields")
 create_group(fid, "grid")
@@ -18,7 +18,7 @@ fid["grid"]["raditude"] = raditude
 
 # 1:24, ..., 3 * 4 * 2, we have 26 years but this is good enough
 year_groups = [4*(i-1)+1:4*(i-1)+4 for i in 1:6]
-year_groups = [1:1] # for now only handle one average
+year_groups = [1:5] # for now only handle one average
 
 month_integer = 1
 month_dictionary = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
