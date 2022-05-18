@@ -1,4 +1,4 @@
-using GLMakie
+using GLMakie, Statistics
 
 function closest_index(value, field)
     argmin(abs.(value .- field))

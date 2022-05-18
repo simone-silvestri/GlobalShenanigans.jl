@@ -1,5 +1,6 @@
-using GLMakie, Printf, Oceananigans, JLD2, SeawaterPolynomials
+using Printf, Oceananigans, JLD2, SeawaterPolynomials
 
+global_filepath = "/storage1/uq-global/GlobalShenanigans.jl/"
 load_from_simulation = false
 if load_from_simulation
     println("loading from simulation")
@@ -41,7 +42,7 @@ end
 
 z = Array(grid.zᵃᵃᶜ[1:end-4])
 eos_teos10 = SeawaterPolynomials.TEOS10EquationOfState()
-rz = reshape(z, (1,1,length(z)))
+rz = reshape(z, (1, 1, length(z)))
 # 2km reference level for potential density
 teos10_ρ = SeawaterPolynomials.ρ′.(Ttrac, Strac, Ref(-2000.0), Ref(eos_teos10))
 ρ_prime = @. (teos10_ρ - eos_teos10.reference_density) / eos_teos10.reference_density
@@ -62,3 +63,5 @@ vvel[continentsv] .= NaN
 Ttrac[continentst] .= NaN
 Strac[continentst] .= NaN
 ρ_prime[continentst] .= NaN
+
+oceananigans_grid = (; λ = λc, ϕ = φc, z = z)
