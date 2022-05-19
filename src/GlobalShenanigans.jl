@@ -6,8 +6,6 @@ using Reexport
 @reexport using Oceananigans
 using JLD2
 using Oceananigans.Fields: interpolate
-using KernelAbstractions: @kernel, @index, MultiEvent
-using KernelAbstractions.Extras.LoopInfo: @unroll
 using Oceananigans.Architectures: device, arch_array, device_event
 using Oceananigans.Units
 using Oceananigans.Fields: interpolate

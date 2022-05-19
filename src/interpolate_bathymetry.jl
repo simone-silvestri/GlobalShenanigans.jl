@@ -3,8 +3,6 @@ using PyCall
 using FFTW
 using FastSphericalHarmonics
 
-
-
 function interpolate_bathymetry_from_file(filename, passes, degree, latitude)
 
     file = jldopen(filename)
@@ -141,30 +139,18 @@ end
 
 @inline is_coupled_fluid(t, i, j) = land_rectangle(t, i, j, -1) | land_rectangle(t, i, j, -2)
 
-@kernel function _mask_coupled_elements!(bathy) 
-    i, j = @index(Global, NTuple)
+function mask_coupled_elements!(bathy) 
+    
+    bathy2 = deepcopy(bathy)
 
-    # start with index 2
-    i′ = i + 2
-    j′ = j + 2
-    if is_coupled_fluid(bathy, i′, j′) == true
-        bathy[i′, j′] = ABOVE_SEA_LEVEL
+    for i in 3:size(bathy, 1)-2, j in 3:size(bathy, 2)-2
+        # start with index 2\
+        if is_coupled_fluid(bathy, i, j) == true
+            bathy2[i, j] = ABOVE_SEA_LEVEL
+        end
     end
-end
 
-function mask_coupled_elements(bathy, arch)
-    dev = device(arch)
-    Nx, Ny = size(bathy)
-
-    #copy to GPU
-    bathy_GPU = deepcopy(arch_array(arch, bathy))
-
-    loop! = _mask_coupled_elements!(dev, (16, 16), (Nx-4, Ny-4))
-    event = loop!(bathy_GPU; dependencies=device_event(arch))
-    wait(dev, event)
-
-    #copy back
-    return bathy = Array(bathy_GPU)
+    return bathy2
 end
 
 function write_bathymetry_to_file(prefix, bathy, lat)
