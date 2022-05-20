@@ -21,7 +21,7 @@ function plot_extrema(grid1, grid2)
     return (; λ, ϕ, z)
 end
 
-function comparison(grid1, solution1, grid2, solution2; quantiles=(0.01, 0.99), colormap=:linear_protanopic_deuteranopic_kbw_5_98_c40_n256, quick=nothing)
+function comparison(grid1, solution1, grid2, solution2, grid3, solution3; quantiles=(0.01, 0.99), colormap=:linear_protanopic_deuteranopic_kbw_5_98_c40_n256, quick=nothing)
     if isnothing(quick)
         nothing
     elseif quick == :linear
@@ -41,6 +41,7 @@ function comparison(grid1, solution1, grid2, solution2; quantiles=(0.01, 0.99), 
 
     λ1, ϕ1, z1 = grid1
     λ2, ϕ2, z2 = grid2
+    λ3, ϕ3, z3 = grid3
 
     p_extrema = plot_extrema(grid1, grid2)
 
@@ -48,11 +49,13 @@ function comparison(grid1, solution1, grid2, solution2; quantiles=(0.01, 0.99), 
     λvalue = λ_slider.value
     λ1_index = @lift(closest_index($λvalue, λ1))
     λ2_index = @lift(closest_index($λvalue, λ2))
+    λ3_index = @lift(closest_index($λvalue, λ3))
 
     ϕ_slider = Slider(fig[3, 1], range=-75:75, startvalue=0, horizontal=false)
     ϕvalue = ϕ_slider.value
     ϕ1_index = @lift(closest_index($ϕvalue, ϕ1))
     ϕ2_index = @lift(closest_index($ϕvalue, ϕ2))
+    ϕ3_index = @lift(closest_index($ϕvalue, ϕ3))
 
     ϕstring = @lift(string($ϕvalue))
     λstring = @lift(string($λvalue))
@@ -63,6 +66,7 @@ function comparison(grid1, solution1, grid2, solution2; quantiles=(0.01, 0.99), 
 
     field1_profile = @lift(solution1[$λ1_index, $ϕ1_index, :])
     field2_profile = @lift(solution2[$λ2_index, $ϕ2_index, :])
+    field3_profile = @lift(solution3[$λ3_index, $ϕ3_index, :])
 
     surface_index = closest_index(0.0, z1) # 0 is assumed to be the surface
     surface_field = solution1[:, :, surface_index]
@@ -76,8 +80,9 @@ function comparison(grid1, solution1, grid2, solution2; quantiles=(0.01, 0.99), 
     vl = vlines!(ax3, @lift(λ1[$λ1_index]), color=:orange, linewidth=3)
     hl = hlines!(ax3, @lift(ϕ1[$ϕ1_index]), color=:yellow, linewidth=3)
 
-    line1 = lines!(ax4, field1_profile, z1)
-    line2 = lines!(ax5, field2_profile, z2)
+    line1 = lines!(ax4, field1_profile, z1, color = :blue)
+    line2 = lines!(ax4, field2_profile, z2, color = :red)
+    line3 = lines!(ax4, field3_profile, z3, color = :green)
 
     Colorbar(fig[2, 4], hm, height=Relative(3 / 4), width=25, ticklabelsize=30,
         labelsize=30, ticksize=25, tickalign=1,)
