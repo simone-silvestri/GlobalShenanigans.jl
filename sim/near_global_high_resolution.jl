@@ -21,6 +21,8 @@ using Oceananigans.Operators
 using Oceananigans.Operators: Δzᵃᵃᶜ
 using Oceananigans: prognostic_fields
 
+include("horizontal_visc.jl")
+
 @inline function visualize(field, lev, dims) 
     (dims == 1) && (idx = (lev, :, :))
     (dims == 2) && (idx = (:, lev, :))
@@ -74,7 +76,7 @@ datadep"quarter_degree_near_global_lat_lon"
 datadep_path = @datadep_str "quarter_degree_near_global_lat_lon/z_faces-50-levels.jld2"
 file_z_faces = jldopen(datadep_path)
 
-bathy_path = "bathymetry-ad-hoc.jld2" # "smooth-bathymetry.jld2" #
+bathy_path = "../data/bathymetry-ad-hoc.jld2" # "smooth-bathymetry.jld2" #
 bathymetry = jldopen(bathy_path)["bathymetry"]
 
 τˣ = zeros(Nx, Ny, Nmonths)
@@ -82,7 +84,7 @@ bathymetry = jldopen(bathy_path)["bathymetry"]
 T★ = zeros(Nx, Ny, Nmonths)
 S★ = zeros(Nx, Ny, Nmonths)
 
-path_bc = "boundary_conditions-1-12degree.jld2"
+path_bc = "../data/boundary_conditions-1-12degree.jld2"
 
 # Files contain 1 year (1992) of 12 monthly averages
 τˣ = jldopen(path_bc)["τˣ"] ./ reference_density;
@@ -125,38 +127,11 @@ target_sea_surface_salinity    = S★ = multi_region_object_from_array(S★, mrg
 
 using Oceananigans.TurbulenceClosures
 using Oceananigans.TurbulenceClosures: HorizontalDivergenceFormulation, HorizontalFormulation
-using Oceananigans.Grids: min_Δx, min_Δy
-using Oceananigans.Operators: Δxᶜᶜᶜ, Δyᶜᶜᶜ, ℑxyᶜᶜᵃ
-
-@inline Dₜ(i, j, k, grid, u, v) = ∂xᶠᶠᶜ(i, j, k, grid, v) + ∂yᶠᶠᶜ(i, j, k, grid, u)
-@inline Dₛ(i, j, k, grid, u, v) = ∂xᶜᶜᶜ(i, j, k, grid, u) - ∂yᶜᶜᶜ(i, j, k, grid, v)
-
-dx_min    = min_Δx(grid.underlying_grid)
-dy_min    = min_Δy(grid.underlying_grid)
-timescale = 100days
-
-Cₛₘ = 4.0
-
-@show C₄    = (Cₛₘ / π)^2 / 8
-@show min_ν = (1 / (1 / dx_min^2 + 1 / dy_min^2))^2 / timescale
-
-@inline Δ⁴ᶜᶜᶜ(i, j, k, grid) = (min(Δxᶜᶜᶜ(i, j, k, grid)^2, Δyᶜᶜᶜ(i, j, k, grid)^2))^2
-
-@inline function νhb_final(i, j, k, grid, clock, fields, p)
-    δ₁ = Dₛ(i, j, k, grid, fields.u, fields.v)
-    δ₂ = ℑxyᶜᶜᵃ(i, j, k, grid, Dₜ, fields.u, fields.v)
-    return max(Δ⁴ᶜᶜᶜ(i, j, k, grid) * p.C₄ * sqrt(δ₁^2 + δ₂^2), p.min_ν)
-end
-
-loc = (Center, Center, Center)
-
-biharmonic_viscosity  = ScalarBiharmonicDiffusivity(HorizontalDivergenceFormulation();
-                                                    ν=νhb_final, discrete_form=true, loc,
-                                                    parameters = (C₄ = C₄, min_ν = min_ν))
 
 νz = 5e-3
 κz = 1e-4
 
+biharmonic_viscosity   = smagorinsky_viscosity(HorizontalDivergenceFormulation(), grid; Cₛₘ = 4.5)
 vertical_diffusivity   = VerticalScalarDiffusivity(VerticallyImplicitTimeDiscretization(), ν=νz, κ=κz)
 convective_adjustment  = ConvectiveAdjustmentVerticalDiffusivity(VerticallyImplicitTimeDiscretization(), convective_κz = 1.0)
 
@@ -285,7 +260,7 @@ T = model.tracers.T
 S = model.tracers.S
 
 @info "Reading initial conditions"
-file_init = jldopen("evolved-initial-conditions-120days.jld2")
+file_init = jldopen("../data/evolved-initial-conditions-120days.jld2")
 
 @info "initializing model"
 T_init = multi_region_object_from_array(file_init["T"], mrg);
