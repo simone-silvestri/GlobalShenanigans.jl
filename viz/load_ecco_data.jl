@@ -1,6 +1,5 @@
 using HDF5, Statistics
 
-
 function load_ecco_data(filepath, month_index)
     fid = h5open(filepath, "r")
 

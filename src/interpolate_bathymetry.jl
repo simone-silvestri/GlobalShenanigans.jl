@@ -53,7 +53,7 @@ function etopo1_to_spherical_harmonics()
 
     lmax = 10798
 
-    etopo1 = jldopen("bathymetry-ice-21600x10800.jld2")["bathymetry"]
+    etopo1 = jldopen("data/bathymetry-ice-21600x10800.jld2")["bathymetry"]
 
     # latitude interpolate and transpose
     etopo1_center = 0.5 *(etopo1[:, 2:end] .+ etopo1[:, 1:end-1])
@@ -108,7 +108,7 @@ function remove_connected_regions(bathymetry)
     batneg[batneg.>0] .= 0
     batneg[batneg.<0] .= 1
 
-    labels = skimagemeasure.label(batneg)
+    labels = sckikitimage.label(batneg)
 
     total_elements = zeros(maximum(labels))
 

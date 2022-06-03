@@ -29,10 +29,9 @@ function load_single_file(ic_filepath = "/storage1/uq-global/GlobalShenanigans.j
     println("loading from ", ic_filepath)
     jlfile = jldopen(ic_filepath)
 
-
     # 1:12 first year, 1+1*12:2*12 second year, 1+2*12:3*12 third year and so forth
-    Ttrac = jlfile["u/data"][5:end-4, 5:end-4, 5:end-4]
-    Strac = jlfile["v/data"][5:end-4, 5:end-4, 5:end-4]
+    Ttrac = jlfile["T/data"][5:end-4, 5:end-4, 5:end-4]
+    Strac = jlfile["S/data"][5:end-4, 5:end-4, 5:end-4]
     
     continentst = (Ttrac .== 0.0)
     continentss = (Strac .== 0.0)

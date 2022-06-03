@@ -1,4 +1,8 @@
 *.jld2
 *.h5
 *.so
+*.mp4
+*.png
+*.tif
+*.gif
 
